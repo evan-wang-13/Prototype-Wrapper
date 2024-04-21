@@ -69,6 +69,8 @@ for ep in tqdm(range(NUM_EPISODES)):
 		count += 1
 
 		# Run one step of the environment based on the current policy
+		# x is the final embedding produced by the network before converting to action dimensions. So x is the latent representation that the network encoder produces, = z in the paper 
+		# vector of size 256
 		value, alpha, beta, x = ppo.net(self_state)
 		value, alpha, beta = value.squeeze(0), alpha.squeeze(0), beta.squeeze(0)
 		policy = Beta(alpha, beta)
@@ -102,6 +104,7 @@ for ep in tqdm(range(NUM_EPISODES)):
 
 print("average reward per episode :", sum(reward_arr) / NUM_EPISODES)
 
+# X_train: contains the latent states. List, one list for each episode
 with open('data/X_train.pkl', 'wb') as f:
 	pickle.dump(X_train, f)
 with open('data/real_actions.pkl', 'wb') as f:
