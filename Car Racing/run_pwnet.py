@@ -1,7 +1,7 @@
 import gym
-import torch 
+import torch
 import torch.nn as nn
-import numpy as np      
+import numpy as np
 import pickle
 import toml
 
@@ -16,24 +16,23 @@ from tqdm import tqdm
 
 
 NUM_ITERATIONS = 5
-MODEL_DIR = 'weights/pw_net.pth'
+MODEL_DIR = "weights/pw_net.pth"
 CONFIG_FILE = "config.toml"
 NUM_CLASSES = 3
 LATENT_SIZE = 256
 PROTOTYPE_SIZE = 50
 BATCH_SIZE = 32
 NUM_EPOCHS = 10
-DEVICE = 'cpu'
+DEVICE = "cpu"
 delay_ms = 0
 NUM_PROTOTYPES = 4
 SIMULATION_EPOCHS = 30
 
 
 class PWNet(nn.Module):
-
     def __init__(self):
         super(PWNet, self).__init__()
-        self.ts = ListModule(self, 'ts_')
+        self.ts = ListModule(self, "ts_")
         for i in range(NUM_PROTOTYPES):
             transformation = nn.Sequential(
                 nn.Linear(LATENT_SIZE, PROTOTYPE_SIZE),
@@ -41,14 +40,16 @@ class PWNet(nn.Module):
                 nn.ReLU(),
                 nn.Linear(PROTOTYPE_SIZE, PROTOTYPE_SIZE),
             )
-            self.ts.append(transformation)  
+            self.ts.append(transformation)
         self.epsilon = 1e-5
-        self.linear = nn.Linear(NUM_PROTOTYPES, NUM_CLASSES, bias=False) 
+        self.linear = nn.Linear(NUM_PROTOTYPES, NUM_CLASSES, bias=False)
         self.__make_linear_weights()
         self.tanh = nn.Tanh()
-        self.relu = nn.ReLU() 
-        self.nn_human_x = nn.Parameter( torch.randn(NUM_PROTOTYPES, LATENT_SIZE), requires_grad=False)
-        
+        self.relu = nn.ReLU()
+        self.nn_human_x = nn.Parameter(
+            torch.randn(NUM_PROTOTYPES, LATENT_SIZE), requires_grad=False
+        )
+
     def __make_linear_weights(self):
         """
         Must be manually defined to connect prototypes to human-friendly concepts
@@ -57,24 +58,26 @@ class PWNet(nn.Module):
         More could be connected, but we just use 2 here for simplicity.
         """
 
-        custom_weight_matrix = torch.tensor([
-                                             [-1., 0., 0.], 
-                                             [ 1., 0., 0.],
-                                             [ 0., 1., 0.], 
-                                             [ 0., 0., 1.],
-        ])
-        self.linear.weight.data.copy_(custom_weight_matrix.T)   
-        
+        custom_weight_matrix = torch.tensor(
+            [
+                [-1.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ]
+        )
+        self.linear.weight.data.copy_(custom_weight_matrix.T)
+
     def __proto_layer_l2(self, x, p):
         output = list()
         b_size = x.shape[0]
-        p = p.view(1, PROTOTYPE_SIZE).tile(b_size, 1).to(DEVICE) 
-        c = x.view(b_size, PROTOTYPE_SIZE).to(DEVICE)      
-        l2s = ( (c - p)**2 ).sum(axis=1).to(DEVICE) 
-        act = torch.log( (l2s + 1. ) / (l2s + self.epsilon) ).to(DEVICE)  
+        p = p.view(1, PROTOTYPE_SIZE).tile(b_size, 1).to(DEVICE)
+        c = x.view(b_size, PROTOTYPE_SIZE).to(DEVICE)
+        l2s = ((c - p) ** 2).sum(axis=1).to(DEVICE)
+        act = torch.log((l2s + 1.0) / (l2s + self.epsilon)).to(DEVICE)
         return act
-    
-    def __output_act_func(self, p_acts):    
+
+    def __output_act_func(self, p_acts):
         """
         Use appropriate activation functions for the problem at hand
         Here, tanh and relu make the most sense as they bin the possible output
@@ -85,26 +88,27 @@ class PWNet(nn.Module):
         p_acts.T[1] = self.relu(p_acts.T[1])  # acc > 0
         p_acts.T[2] = self.relu(p_acts.T[2])  # brake > 0
         return p_acts
-    
+
     def forward(self, x):
-        
         # Get the latent prototypes by putting them through the individual transformations
         trans_nn_human_x = list()
         for i, t in enumerate(self.ts):
-            trans_nn_human_x.append( t( torch.tensor(self.nn_human_x[i], dtype=torch.float32).view(1, -1)) )
-        latent_protos = torch.cat(trans_nn_human_x, dim=0)   
-            
+            trans_nn_human_x.append(
+                t(torch.tensor(self.nn_human_x[i], dtype=torch.float32).view(1, -1))
+            )
+        latent_protos = torch.cat(trans_nn_human_x, dim=0)
+
         # Do similarity of inputs to prototypes
         p_acts = list()
         for i, t in enumerate(self.ts):
             action_prototype = latent_protos[i]
-            p_acts.append( self.__proto_layer_l2( t(x), action_prototype).view(-1, 1) )
+            p_acts.append(self.__proto_layer_l2(t(x), action_prototype).view(-1, 1))
         p_acts = torch.cat(p_acts, axis=1)
-        
+
         # Put though activation function method
-        logits = self.linear(p_acts)                     
-        final_outputs = self.__output_act_func(logits)   
-        
+        logits = self.linear(p_acts)
+        final_outputs = self.__output_act_func(logits)
+
         return final_outputs
 
 
@@ -131,7 +135,7 @@ def load_config():
 
 
 class ListModule(object):
-    #Should work with all kind of module
+    # Should work with all kind of module
     def __init__(self, module, prefix, *args):
         self.module = module
         self.prefix = prefix
@@ -141,7 +145,7 @@ class ListModule(object):
 
     def append(self, new_module):
         if not isinstance(new_module, nn.Module):
-            raise ValueError('Not a Module')
+            raise ValueError("Not a Module")
         else:
             self.module.add_module(self.prefix + str(self.num_module), new_module)
             self.num_module += 1
@@ -151,23 +155,25 @@ class ListModule(object):
 
     def __getitem__(self, i):
         if i < 0 or i >= self.num_module:
-            raise IndexError('Out of bound')
+            raise IndexError("Out of bound")
         return getattr(self.module, self.prefix + str(i))
 
 
 def proto_loss(model, nn_human_x, criterion):
     model.eval()
     target_x = trans_human_concepts(model, nn_human_x)
-    loss = criterion(model.prototypes, target_x) 
+    loss = criterion(model.prototypes, target_x)
     model.train()
     return loss
-    
+
 
 def trans_human_concepts(model, nn_human_x):
     model.eval()
     trans_nn_human_x = list()
     for i, t in enumerate(model.ts):
-        trans_nn_human_x.append( t( torch.tensor(nn_human_x[i], dtype=torch.float32).view(1, -1)) )
+        trans_nn_human_x.append(
+            t(torch.tensor(nn_human_x[i], dtype=torch.float32).view(1, -1))
+        )
     model.train()
     return torch.cat(trans_nn_human_x, dim=0)
 
@@ -179,7 +185,10 @@ data_errors = list()
 
 for _ in range(NUM_ITERATIONS):
     cfg = load_config()
-    env = CarRacing(frame_skip=0, frame_stack=4,)
+    env = CarRacing(
+        frame_skip=0,
+        frame_stack=4,
+    )
     net = RacingNet(env.observation_space.shape, env.action_space.shape)
     ppo = PPO(
         env,
@@ -199,9 +208,9 @@ for _ in range(NUM_ITERATIONS):
     )
     ppo.load("weights/agent_weights.pt")
 
-    with open('data/X_train.pkl', 'rb') as f:
+    with open("data/X_train_PPO.pkl", "rb") as f:
         X_train = pickle.load(f)
-    with open('data/real_actions.pkl', 'rb') as f:
+    with open("data/real_actions_PPO.pkl", "rb") as f:
         real_actions = pickle.load(f)
 
     X_train = np.array([item for sublist in X_train for item in sublist])
@@ -214,54 +223,62 @@ for _ in range(NUM_ITERATIONS):
     # Human defined Prototypes for interpretable model (these were gotten manually earlier)
     # A clustering analysis could be done to help guide the search, or they can be manually chosen.
     # Lastly, they could also be learned as pwnet* shows in the comparitive tests
-    p_idxs = np.array([10582, 20116, 4616, 2659]) 
+    p_idxs = np.array([10582, 20116, 4616, 2659])
     nn_human_x = X_train[p_idxs.flatten()]
     nn_human_actions = real_actions[p_idxs.flatten()]
 
     #### Training
     model = PWNet().eval()
-    model.nn_human_x.data.copy_( torch.tensor(nn_human_x) )
+    model.nn_human_x.data.copy_(torch.tensor(nn_human_x))
 
     mse_loss = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01, )
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=0.01,
+    )
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.97)
-    best_error = float('inf')
+    best_error = float("inf")
     model.train()
 
     # Freeze Linear Layer
     model.linear.weight.requires_grad = False
 
-
     for epoch in range(NUM_EPOCHS):
-        
         running_loss = 0
         model.eval()
         train_error = evaluate_loader(model, train_loader, mse_loss)
         model.train()
-        
+
         if train_error < best_error:
-            torch.save(  model.state_dict(), 'weights/pw_net.pth'  )
+            torch.save(model.state_dict(), "weights/pw_net.pth")
             best_error = train_error
-        
+
         for instances, labels in train_loader:
-            
             optimizer.zero_grad()
-                    
+
             instances, labels = instances.to(DEVICE), labels.to(DEVICE)
-                            
-            logits = model(instances)    
+
+            logits = model(instances)
             loss = mse_loss(logits, labels)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-                    
+
         print("Epoch:", epoch)
         print("Running Error:", running_loss / len(train_loader))
         print("MAE:", train_error)
         print(" ")
         scheduler.step()
 
-    states, actions, rewards, log_probs, values, dones, X_train = [], [], [], [], [], [], []
+    states, actions, rewards, log_probs, values, dones, X_train = (
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+    )
     self_state = ppo._to_tensor(env.reset())
 
     # Wapper model with learned weights
@@ -288,9 +305,13 @@ for _ in range(NUM_ITERATIONS):
 
             action = model(latent_x)
 
-            all_errors.append(  mse_loss( torch.tensor(bb_action), action[0]).detach().item()  )
+            all_errors.append(
+                mse_loss(torch.tensor(bb_action), action[0]).detach().item()
+            )
 
-            state, reward, done, _, _ = ppo.env.step(action[0].detach().numpy(), real_action=True)
+            state, reward, done, _, _ = ppo.env.step(
+                action[0].detach().numpy(), real_action=True
+            )
             state = ppo._to_tensor(state)
             rew += reward
             count += 1
@@ -299,8 +320,8 @@ for _ in range(NUM_ITERATIONS):
 
         reward_arr.append(rew)
 
-    data_rewards.append(  sum(reward_arr) / SIMULATION_EPOCHS  )
-    data_errors.append(  sum(all_errors) / SIMULATION_EPOCHS )
+    data_rewards.append(sum(reward_arr) / SIMULATION_EPOCHS)
+    data_errors.append(sum(all_errors) / SIMULATION_EPOCHS)
     print("Iteration Reward:", sum(reward_arr) / SIMULATION_EPOCHS)
 
 data_errors = np.array(data_errors)
@@ -309,10 +330,9 @@ data_rewards = np.array(data_rewards)
 print(" ")
 print("===== Data MAE:")
 print("Mean:", data_errors.mean())
-print("Standard Error:", data_errors.std() / np.sqrt(NUM_ITERATIONS)  )
+print("Standard Error:", data_errors.std() / np.sqrt(NUM_ITERATIONS))
 print(" ")
 print("===== Data Reward:")
 print("Rewards:", data_rewards)
 print("Mean:", data_rewards.mean())
-print("Standard Error:", data_rewards.std() / np.sqrt(NUM_ITERATIONS)  )
-
+print("Standard Error:", data_rewards.std() / np.sqrt(NUM_ITERATIONS))

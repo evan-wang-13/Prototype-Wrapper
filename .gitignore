@@ -1,0 +1,5 @@
+# Ignore data directory in Car Racing
+Car Racing/data/
+
+# Ignore specific file pwnet in Car Racing
+Car Racing/pwnet

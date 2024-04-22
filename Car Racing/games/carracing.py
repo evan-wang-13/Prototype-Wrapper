@@ -65,7 +65,7 @@ class RacingNet(nn.Module):
 
         return int(np.prod(x.size()))
 
-
+    
 class CarRacing(gym.Wrapper):
     def __init__(self, frame_skip=0, frame_stack=4):
         self.env = gym.make("CarRacing-v1")
@@ -152,4 +152,3 @@ class CarRacing(gym.Wrapper):
         self.frame_buf.append(new_frame)
 
         return self.get_observation(), reward, done, info, torch.tensor(action)  #, real_frame
-
