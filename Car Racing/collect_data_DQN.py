@@ -113,13 +113,15 @@ for ep in tqdm(range(NUM_EPISODES)):
     )
 
     while not done:
-        # env.render()
+        env.render()
         current_state_frame_stack = generate_state_frame_stack_from_queue(
             state_frame_stack_queue
         )
         count += 1
 
         action, latent, action_index = agent.act(current_state_frame_stack)
+
+        print(action)
 
         # Run one step of the environment based on the current policy
         # x is the final embedding produced by the network before converting to action dimensions. So x is the latent representation that the network encoder produces, = z in the paper

@@ -4,6 +4,7 @@ import torch.nn as nn
 import numpy as np
 import pickle
 import toml
+import matplotlib as plt
 
 from copy import deepcopy
 from torch.utils.data import TensorDataset, DataLoader
@@ -18,20 +19,21 @@ from tensorflow.keras.models import load_model
 import torch.nn as nn
 from common_functions import process_state_image, generate_state_frame_stack_from_queue
 from collections import deque
+import torch.nn.functional as F
 
 
-NUM_ITERATIONS = 1
+NUM_ITERATIONS = 5
 MODEL_DIR = "weights/pw_net_DQN.pth"
 CONFIG_FILE = "config.toml"
 NUM_CLASSES = 3
 LATENT_SIZE = 216
 PROTOTYPE_SIZE = 50
 BATCH_SIZE = 16
-NUM_EPOCHS = 50
+NUM_EPOCHS = 10
 DEVICE = "cpu"
 delay_ms = 0
 NUM_PROTOTYPES = 4
-SIMULATION_EPOCHS = 30
+SIMULATION_EPOCHS = 5
 
 
 class PWNet(nn.Module):
@@ -53,6 +55,27 @@ class PWNet(nn.Module):
         self.relu = nn.ReLU()
         self.nn_human_x = nn.Parameter(
             torch.randn(NUM_PROTOTYPES, LATENT_SIZE), requires_grad=False
+        )
+
+        self.register_buffer(
+            "action_space",
+            torch.tensor(
+                [
+                    [-1, 1, 0.2],
+                    [0, 1, 0.2],
+                    [1, 1, 0.2],
+                    [-1, 1, 0],
+                    [0, 1, 0],
+                    [1, 1, 0],
+                    [-1, 0, 0.2],
+                    [0, 0, 0.2],
+                    [1, 0, 0.2],
+                    [-1, 0, 0],
+                    [0, 0, 0],
+                    [1, 0, 0],
+                ],
+                dtype=torch.float32,
+            ),
         )
 
     def __make_linear_weights(self):
@@ -114,7 +137,20 @@ class PWNet(nn.Module):
         logits = self.linear(p_acts)
         final_outputs = self.__output_act_func(logits)
 
-        return final_outputs
+        distances = torch.cdist(
+            final_outputs.unsqueeze(0), self.action_space.unsqueeze(0)
+        ).squeeze(0)
+
+        # Convert distances to probabilities using a softmin
+        action_probabilities = torch.nn.functional.softmin(distances, dim=1)
+
+        # Find the index of the highest probability action
+        max_prob_index = torch.argmax(action_probabilities, dim=1)
+
+        # Select the action with the highest probability
+        selected_action = self.action_space[max_prob_index]
+
+        return selected_action, action_probabilities
 
 
 def evaluate_loader(model, loader, loss):
@@ -125,8 +161,8 @@ def evaluate_loader(model, loader, loss):
         for i, data in enumerate(loader):
             imgs, labels = data
             imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
-            logits = model(imgs)
-            current_loss = loss(logits, labels)
+            action, probs = model(imgs)
+            current_loss = loss(action, labels)
             total_error += current_loss.item()
             total += len(imgs)
     model.train()
@@ -218,6 +254,28 @@ def find_closest_action(batch_continuous_output, action_space):
     return action_space_tensor[closest_action_indices]
 
 
+def cross_entropy_loss(action_probabilities, actual_actions, action_space):
+    action_space = torch.tensor(action_space, dtype=torch.float32)
+
+    # Convert actual_actions to a tensor (if not already one), ensuring it matches dimensions
+    actual_actions = torch.tensor(actual_actions, dtype=torch.float32)
+    # Convert actual_actions into indices in action_space
+    action_indices = [
+        (action_space == actual_action).all(dim=1).nonzero(as_tuple=True)[0].item()
+        for actual_action in actual_actions
+    ]
+
+    # Create a batch of one-hot target vectors
+    target_vectors = F.one_hot(
+        torch.tensor(action_indices), num_classes=len(action_space)
+    ).float()
+
+    # Calculate loss across the batch
+    loss = F.cross_entropy(action_probabilities, target_vectors)
+
+    return loss
+
+
 # Define your action space
 action_space = [
     (-1, 1, 0.2),
@@ -274,7 +332,7 @@ for _ in range(NUM_ITERATIONS):
     mse_loss = nn.MSELoss()
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=0.01,
+        lr=0.1,  # LEARNING RATE
     )
     scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.97)
     best_error = float("inf")
@@ -298,12 +356,23 @@ for _ in range(NUM_ITERATIONS):
 
             instances, labels = instances.to(DEVICE), labels.to(DEVICE)
 
-            logits = model(instances)
+            action, probs = model(instances)
+
+            # print("ACTIONS: ", action)
+            # print("PROBS: ", probs)
+            # print("LABELS: ", labels)
+
+            # print("ACTION: ", action.shape)
+            # print("PROBS: ", probs.shape)
+            # print("LABELS: ", labels.shape)
 
             # discretized_action = find_closest_action(logits, action_space)
             # print(discretized_action.shape)
             # print(labels.shape)
-            loss = mse_loss(logits, labels)
+            # Calculate MSE loss
+
+            loss = cross_entropy_loss(probs, labels, action_space)
+
             # loss = mse_loss(discretized_action, labels)
             loss.backward()
             optimizer.step()
@@ -338,6 +407,7 @@ for _ in range(NUM_ITERATIONS):
         count = 0
         rew = 0
         model.eval()
+        correct = 0
 
         state_frame_stack_queue = deque(
             [next_state] * agent.frame_stack_num, maxlen=agent.frame_stack_num
@@ -345,22 +415,33 @@ for _ in range(NUM_ITERATIONS):
 
         for t in range(10000):
             # Get black box action
+            env.render()
             current_state_frame_stack = generate_state_frame_stack_from_queue(
                 state_frame_stack_queue
             )
             count += 1
 
-            bb_action, latent = agent.act(current_state_frame_stack)
+            bb_action, latent, index = agent.act(current_state_frame_stack)
+            # if t % 100 == 0:
+            #     print(bb_action)
 
-            action = model(torch.tensor(latent))
+            action, probs = model(torch.tensor(latent))
 
-            discretized_action = find_closest_action(action, action_space)
+            labels = torch.tensor(bb_action).unsqueeze(0)
+
+            # print("ACTION: ", action.shape)
+            # print(action[0])
+            # print("PROBS: ", probs.shape)
+            # print("LABELS: ", bb_action.shape)
+
+            # discretized_action = find_closest_action(action, action_space)
 
             all_errors.append(
-                mse_loss(torch.tensor(bb_action), discretized_action).detach().item()
+                cross_entropy_loss(probs, labels, action_space).detach().item()
             )
-
-            state, reward, done, info = env.step(discretized_action)
+            # print(torch.equal(torch.tensor(actions), labels))
+            next_state, reward, done, info = env.step(action[0].detach().numpy())
+            # next_state, reward, done, info = env.step(bb_action)
 
             # all_errors.append(
             #     mse_loss(torch.tensor(bb_action), action[0]).detach().item()
@@ -369,9 +450,19 @@ for _ in range(NUM_ITERATIONS):
             # state, reward, done, info = env.step(action[0].detach().numpy())
             # state = ppo._to_tensor(state)
             rew += reward
-            count += 1
+
+            next_state = process_state_image(next_state)
+            state_frame_stack_queue.append(next_state)
             if done:
                 break
+
+            # if t % 50 == 0:
+            #     # print("Latent: ", latent)
+            #     print("Actions: ", action)
+            #     print("Labels: ", labels)
+
+            #     print("Correct: ", correct, count, correct / count)
+            #     print("Reward: ", reward)
 
         reward_arr.append(rew)
 
@@ -391,3 +482,23 @@ print("===== Data Reward:")
 print("Rewards:", data_rewards)
 print("Mean:", data_rewards.mean())
 print("Standard Error:", data_rewards.std() / np.sqrt(NUM_ITERATIONS))
+
+plt.figure(figsize=(10, 5))
+plt.plot(reward_arr, marker="o", linestyle="-", color="blue")
+plt.title("Sample Reward Trajectory")
+plt.xlabel("Step")
+plt.ylabel("Reward")
+plt.grid(True)
+
+# Save the plot to a file
+plt.savefig("/plots/reward.png")  # Specify the path and file name
+
+plt.figure(figsize=(10, 5))
+plt.plot(data_rewards, marker="o", linestyle="-", color="blue")
+plt.title("Reward per Simulation Epoch")
+plt.xlabel("Epoch")
+plt.ylabel("MReward")
+plt.grid(True)
+
+# Save the plot to a file
+plt.savefig("/plots/reward_epochs.png")  # Specify the path and file name

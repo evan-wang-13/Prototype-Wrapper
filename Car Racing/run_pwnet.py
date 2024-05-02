@@ -4,6 +4,7 @@ import torch.nn as nn
 import numpy as np
 import pickle
 import toml
+import matplotlib.pyplot as plt
 
 from copy import deepcopy
 from torch.utils.data import TensorDataset, DataLoader
@@ -312,6 +313,9 @@ for _ in range(NUM_ITERATIONS):
             state, reward, done, _, _ = ppo.env.step(
                 action[0].detach().numpy(), real_action=True
             )
+
+            # if t % 100 == 0:
+            #     print(bb_action)
             state = ppo._to_tensor(state)
             rew += reward
             count += 1
@@ -336,3 +340,24 @@ print("===== Data Reward:")
 print("Rewards:", data_rewards)
 print("Mean:", data_rewards.mean())
 print("Standard Error:", data_rewards.std() / np.sqrt(NUM_ITERATIONS))
+
+
+plt.figure(figsize=(10, 5))
+plt.plot(reward_arr, marker="o", linestyle="-", color="blue")
+plt.title("Sample Reward Trajectory")
+plt.xlabel("Step")
+plt.ylabel("Reward")
+plt.grid(True)
+
+# Save the plot to a file
+plt.savefig("plots/reward.png")  # Specify the path and file name
+
+plt.figure(figsize=(10, 5))
+plt.plot(data_rewards, marker="o", linestyle="-", color="blue")
+plt.title("Reward per Simulation Epoch")
+plt.xlabel("Epoch")
+plt.ylabel("Reward")
+plt.grid(True)
+
+# Save the plot to a file
+plt.savefig("plots/reward_epochs.png")  # Specify the path and file name
